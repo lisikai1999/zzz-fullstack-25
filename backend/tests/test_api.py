@@ -117,14 +117,14 @@ class TestFullWorkflow:
         client.post("/api/tasks/assign", json={"user_id": 2})
 
         # Submit annotations
-        tasks = client.get("/api/tasks?assignee_id=1").json()
+        tasks = client.get("/api/tasks?assignee_id=1").json()["items"]
         client.post("/api/annotations", json={
             "task_id": tasks[0]["id"], "image_id": 1, "user_id": 1,
             "annotation_type": "bbox", "label": "nodule",
             "data_json": json.dumps({"coords": [50, 50, 150, 150]}),
         })
 
-        tasks = client.get("/api/tasks?assignee_id=2").json()
+        tasks = client.get("/api/tasks?assignee_id=2").json()["items"]
         client.post("/api/annotations", json={
             "task_id": tasks[0]["id"], "image_id": 1, "user_id": 2,
             "annotation_type": "bbox", "label": "nodule",
@@ -165,8 +165,8 @@ class TestArbitrationWorkflow:
         client.post("/api/tasks/assign", json={"user_id": 1})
         client.post("/api/tasks/assign", json={"user_id": 2})
 
-        tasks_alice = client.get("/api/tasks?assignee_id=1").json()
-        tasks_bob = client.get("/api/tasks?assignee_id=2").json()
+        tasks_alice = client.get("/api/tasks?assignee_id=1").json()["items"]
+        tasks_bob = client.get("/api/tasks?assignee_id=2").json()["items"]
 
         # Very different annotations -> low IoU -> flagged
         client.post("/api/annotations", json={
@@ -187,7 +187,8 @@ class TestArbitrationWorkflow:
         self._setup_flagged_annotations()
         resp = client.get("/api/qc/pending-arbitrations")
         assert resp.status_code == 200
-        items = resp.json()
+        data = resp.json()
+        items = data["items"]
         assert len(items) > 0
         item = items[0]
         assert item["arbitration_status"] == "pending"
@@ -198,7 +199,7 @@ class TestArbitrationWorkflow:
 
     def test_arbitration_detail(self):
         self._setup_flagged_annotations()
-        pending = client.get("/api/qc/pending-arbitrations").json()
+        pending = client.get("/api/qc/pending-arbitrations").json()["items"]
         arb_id = pending[0]["arbitration_id"]
 
         resp = client.get(f"/api/qc/arbitration/{arb_id}")
@@ -212,7 +213,7 @@ class TestArbitrationWorkflow:
 
     def test_submit_arbitration_resolves(self):
         self._setup_flagged_annotations()
-        pending = client.get("/api/qc/pending-arbitrations").json()
+        pending = client.get("/api/qc/pending-arbitrations").json()["items"]
         assert len(pending) > 0
         item = pending[0]
 
@@ -232,7 +233,7 @@ class TestArbitrationWorkflow:
         assert result["reviewer_id"] == 3
 
         # Verify it's no longer in pending
-        pending_after = client.get("/api/qc/pending-arbitrations").json()
+        pending_after = client.get("/api/qc/pending-arbitrations").json()["items"]
         resolved_ids = [p["arbitration_id"] for p in pending_after]
         assert item["arbitration_id"] not in resolved_ids
 
@@ -245,7 +246,8 @@ class TestStatsWithGoldStandard:
     def test_list_annotators_dynamic(self):
         resp = client.get("/api/stats/annotators")
         assert resp.status_code == 200
-        annotators = resp.json()
+        data = resp.json()
+        annotators = data["items"]
         assert len(annotators) == 2
         usernames = [a["username"] for a in annotators]
         assert "alice" in usernames
@@ -272,7 +274,7 @@ class TestStatsWithGoldStandard:
         # Create task and submit annotation from alice
         client.post("/api/tasks/bulk-create", json={"image_ids": [1], "redundancy": 2})
         client.post("/api/tasks/assign", json={"user_id": 1})
-        tasks = client.get("/api/tasks?assignee_id=1").json()
+        tasks = client.get("/api/tasks?assignee_id=1").json()["items"]
         client.post("/api/annotations", json={
             "task_id": tasks[0]["id"], "image_id": 1, "user_id": 1,
             "annotation_type": "bbox", "label": "tumor",
@@ -302,7 +304,7 @@ class TestStatsWithGoldStandard:
 
         client.post("/api/tasks/bulk-create", json={"image_ids": [1], "redundancy": 2})
         client.post("/api/tasks/assign", json={"user_id": 2})
-        tasks = client.get("/api/tasks?assignee_id=2").json()
+        tasks = client.get("/api/tasks?assignee_id=2").json()["items"]
         client.post("/api/annotations", json={
             "task_id": tasks[0]["id"], "image_id": 1, "user_id": 2,
             "annotation_type": "bbox", "label": "nodule",

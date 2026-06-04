@@ -167,14 +167,20 @@ def assess_consistency(image_id: int, db: sqlite3.Connection) -> List[Dict]:
     return results
 
 
-def get_flagged_items(db: sqlite3.Connection) -> List[Dict]:
-    rows = db.execute(
-        """
+def get_flagged_items(db: sqlite3.Connection, limit: int = None, offset: int = None) -> List[Dict]:
+    query = """
         SELECT cr.*, a.status as arbitration_status, a.id as arbitration_id
         FROM consistency_results cr
         LEFT JOIN arbitrations a ON a.consistency_result_id = cr.id
         WHERE cr.flagged = 1
         ORDER BY cr.computed_at DESC
-        """
-    ).fetchall()
+    """
+    params = []
+    if limit is not None:
+        query += " LIMIT ?"
+        params.append(limit)
+    if offset is not None:
+        query += " OFFSET ?"
+        params.append(offset)
+    rows = db.execute(query, params).fetchall()
     return [dict(row) for row in rows]

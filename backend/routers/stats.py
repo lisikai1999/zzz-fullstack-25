@@ -32,32 +32,48 @@ def _compute_gold_deviation(user_id: int, db) -> dict:
     if not user_annotations:
         return {"avg_iou": None, "avg_dice": None, "count": 0}
 
+    image_ids = list({ann["image_id"] for ann in user_annotations})
+
+    # Batch preload all gold standards for relevant images
+    gold_rows = db.execute(
+        """
+        SELECT gs.image_id, gs.annotation_type, gs.label, gs.data_json
+        FROM gold_standards gs
+        WHERE gs.image_id IN ({})
+        """.format(",".join("?" * len(image_ids))),
+        image_ids,
+    ).fetchall()
+
+    # Index gold standards by (image_id, annotation_type, label)
+    gold_map = {}
+    for g in gold_rows:
+        key = (g["image_id"], g["annotation_type"], g["label"])
+        if key not in gold_map:
+            gold_map[key] = g
+
+    # Batch preload image dimensions
+    image_rows = db.execute(
+        """
+        SELECT id, width, height FROM images WHERE id IN ({})
+        """.format(",".join("?" * len(image_ids))),
+        image_ids,
+    ).fetchall()
+    image_dims = {row["id"]: (row["width"], row["height"]) for row in image_rows}
+
     iou_scores = []
     dice_scores = []
 
     for ann in user_annotations:
         ann = dict(ann)
-        gold = db.execute(
-            """
-            SELECT gs.data_json, gs.annotation_type
-            FROM gold_standards gs
-            WHERE gs.image_id = ? AND gs.annotation_type = ? AND gs.label = ?
-            LIMIT 1
-            """,
-            (ann["image_id"], ann["annotation_type"], ann["label"]),
-        ).fetchone()
+        key = (ann["image_id"], ann["annotation_type"], ann["label"])
+        gold = gold_map.get(key)
 
         if not gold:
             continue
 
-        gold = dict(gold)
         ann_data = json.loads(ann["data_json"])
         gold_data = json.loads(gold["data_json"])
-
-        image = db.execute(
-            "SELECT width, height FROM images WHERE id = ?", (ann["image_id"],)
-        ).fetchone()
-        width, height = image["width"], image["height"]
+        width, height = image_dims[ann["image_id"]]
 
         try:
             if ann["annotation_type"] == "bbox":
@@ -84,7 +100,6 @@ def _compute_gold_deviation(user_id: int, db) -> dict:
                 iou_scores.append(iou)
                 dice_scores.append(dice)
             elif ann["annotation_type"] == "classification":
-                # For classification, 1.0 if match, 0.0 if not
                 match = 1.0 if ann_data.get("class") == gold_data.get("class") else 0.0
                 iou_scores.append(match)
                 dice_scores.append(match)
@@ -102,13 +117,26 @@ def _compute_gold_deviation(user_id: int, db) -> dict:
 
 
 @router.get("/annotators")
-def list_annotators():
+def list_annotators(page: int = 1, page_size: int = 20):
     """List all annotators with basic stats."""
     with get_db() as db:
+        total = db.execute(
+            "SELECT COUNT(*) as cnt FROM users WHERE role = 'annotator'"
+        ).fetchone()["cnt"]
+
+        offset = (page - 1) * page_size
         users = db.execute(
-            "SELECT id, username, role, created_at FROM users WHERE role = 'annotator' ORDER BY id"
+            "SELECT id, username, role, created_at FROM users WHERE role = 'annotator' ORDER BY id LIMIT ? OFFSET ?",
+            (page_size, offset),
         ).fetchall()
-        return [dict(u) for u in users]
+
+        return {
+            "items": [dict(u) for u in users],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": (total + page_size - 1) // page_size,
+        }
 
 
 @router.get("/annotator/{user_id}")

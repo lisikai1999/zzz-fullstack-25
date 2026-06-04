@@ -89,16 +89,33 @@ def submit_arbitration(req: ArbitrationCreate):
 
 
 @router.get("/flagged")
-def list_flagged():
+def list_flagged(page: int = 1, page_size: int = 20):
     with get_db() as db:
-        items = get_flagged_items(db)
-        return items
+        total = db.execute(
+            "SELECT COUNT(*) as cnt FROM consistency_results WHERE flagged = 1"
+        ).fetchone()["cnt"]
+
+        offset = (page - 1) * page_size
+        items = get_flagged_items(db, limit=page_size, offset=offset)
+
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": (total + page_size - 1) // page_size,
+        }
 
 
 @router.get("/pending-arbitrations")
-def list_pending_arbitrations():
+def list_pending_arbitrations(page: int = 1, page_size: int = 20):
     """Get all pending arbitration items with full context for the arbitration UI."""
     with get_db() as db:
+        total = db.execute(
+            "SELECT COUNT(*) as cnt FROM arbitrations WHERE status = 'pending'"
+        ).fetchone()["cnt"]
+
+        offset = (page - 1) * page_size
         rows = db.execute(
             """
             SELECT
@@ -118,27 +135,44 @@ def list_pending_arbitrations():
             JOIN images i ON i.id = arb.image_id
             WHERE arb.status = 'pending'
             ORDER BY cr.score ASC
-            """
+            LIMIT ? OFFSET ?
+            """,
+            (page_size, offset),
         ).fetchall()
+
+        # Batch load all referenced annotations
+        ann_ids = set()
+        for row in rows:
+            ann_ids.add(row["annotation_id_a"])
+            ann_ids.add(row["annotation_id_b"])
+
+        ann_map = {}
+        if ann_ids:
+            ann_rows = db.execute(
+                """
+                SELECT a.*, u.username
+                FROM annotations a
+                JOIN users u ON u.id = a.user_id
+                WHERE a.id IN ({})
+                """.format(",".join("?" * len(ann_ids))),
+                list(ann_ids),
+            ).fetchall()
+            ann_map = {a["id"]: dict(a) for a in ann_rows}
 
         results = []
         for row in rows:
             row = dict(row)
-            # Fetch both annotations with user info
-            ann_a = db.execute(
-                "SELECT a.*, u.username FROM annotations a JOIN users u ON u.id = a.user_id WHERE a.id = ?",
-                (row["annotation_id_a"],),
-            ).fetchone()
-            ann_b = db.execute(
-                "SELECT a.*, u.username FROM annotations a JOIN users u ON u.id = a.user_id WHERE a.id = ?",
-                (row["annotation_id_b"],),
-            ).fetchone()
-
-            row["annotation_a"] = dict(ann_a) if ann_a else None
-            row["annotation_b"] = dict(ann_b) if ann_b else None
+            row["annotation_a"] = ann_map.get(row["annotation_id_a"])
+            row["annotation_b"] = ann_map.get(row["annotation_id_b"])
             results.append(row)
 
-        return results
+        return {
+            "items": results,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": (total + page_size - 1) // page_size,
+        }
 
 
 @router.get("/arbitration/{arbitration_id}")

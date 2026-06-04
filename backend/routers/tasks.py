@@ -12,20 +12,33 @@ from services.assignment import assign_next_task, create_tasks_for_images, get_t
 router = APIRouter()
 
 
-@router.get("", response_model=list[TaskResponse])
-def list_tasks(status: str = None, assignee_id: int = None):
+@router.get("")
+def list_tasks(status: str = None, assignee_id: int = None, page: int = 1, page_size: int = 20):
     with get_db() as db:
-        query = "SELECT * FROM tasks WHERE 1=1"
+        base_where = " WHERE 1=1"
         params = []
         if status:
-            query += " AND status = ?"
+            base_where += " AND status = ?"
             params.append(status)
         if assignee_id:
-            query += " AND assignee_id = ?"
+            base_where += " AND assignee_id = ?"
             params.append(assignee_id)
-        query += " ORDER BY priority DESC"
-        rows = db.execute(query, params).fetchall()
-        return [dict(row) for row in rows]
+
+        total = db.execute(
+            "SELECT COUNT(*) as cnt FROM tasks" + base_where, params
+        ).fetchone()["cnt"]
+
+        offset = (page - 1) * page_size
+        query = "SELECT * FROM tasks" + base_where + " ORDER BY priority DESC LIMIT ? OFFSET ?"
+        rows = db.execute(query, params + [page_size, offset]).fetchall()
+
+        return {
+            "items": [dict(row) for row in rows],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": (total + page_size - 1) // page_size,
+        }
 
 
 @router.get("/kanban", response_model=KanbanResponse)
